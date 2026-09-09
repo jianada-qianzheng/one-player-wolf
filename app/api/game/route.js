@@ -1,14 +1,22 @@
 import { groq } from '@ai-sdk/groq';
 import { generateText } from 'ai';
+import { getRolePrompt, buildAISpeechPrompt } from '@/lib/prompts';
 
 export async function POST(req) {
   try {
-    const { rolePrompt, history } = await req.json();
+    const { character, gameHistory, alivePlayers } = await req.json();
 
+    // 1. 获取该角色专属的动态提示词
+    const rolePrompt = getRolePrompt(character.role, character.name, alivePlayers);
+    
+    // 2. 构造完整的 AI 提示词上下文
+    const systemPrompt = buildAISpeechPrompt({ ...character, systemPrompt: rolePrompt }, gameHistory);
+
+    // 3. 调用 Groq 高速模型生成 AI 发言
     const response = await generateText({
-      model: groq('llama-3.3-70b-versatile'), 
-      system: `你正在玩一个单人狼人杀游戏。${rolePrompt}。请保持口语化，不要长篇大论，像真实玩家一样说话。`,
-      messages: history,
+      model: groq('llama-3.3-70b-versatile'),
+      system: systemPrompt,
+      messages: [{ role: 'user', content: '请开始你的发言。' }],
     });
 
     return Response.json({ text: response.text });
