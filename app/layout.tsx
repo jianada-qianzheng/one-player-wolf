@@ -1,4 +1,4 @@
-import './globals.css'; // 如果你用了 Tailwind 或全局样式，保留这行
+
 
 export const metadata = {
   title: '单人简易狼人杀',
