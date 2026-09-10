@@ -4,27 +4,38 @@ import { useState } from 'react';
 import { Player, Message, Phase, GameEngine } from '@/lib/gameEngine';
 
 export default function WolfGame() {
-  const [engine] = useState(() => new GameEngine([
-    { id: '1', name: '你 (Player)', role: 'villager', isAI: false, isAlive: true },
-    { id: '2', name: 'AI-小美', role: 'werewolf', isAI: true, isAlive: true },
-    { id: '3', name: 'AI-老张', role: 'seer', isAI: true, isAlive: true },
-    { id: '4', name: 'AI-小刚', role: 'villager', isAI: true, isAlive: true },
-  ]));
-
+  const [engine] = useState(() => new GameEngine());
   const [phase, setPhase] = useState<Phase>('night');
   const [players, setPlayers] = useState<Player[]>(engine.players);
   const [messages, setMessages] = useState<Message[]>([
-    { sender: '系统', content: '游戏开始：当前是夜晚，请闭眼。你是村民。', timestamp: Date.now() }
+    { sender: '系统', content: '🎮 6人极简杀手局已就绪！\n【配置】1个杀手 🔪 + 5个平民 🛡️（包含你）。\n游戏开始：当前是夜晚，请闭眼。', timestamp: Date.now() }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState<string>('');
 
+  // 开始白天，处理夜晚杀手刀人结果
   const startDay = async () => {
+    setLoading(true);
+    const victim = engine.nightAction();
+    
     engine.phase = 'discussion';
     setPhase('discussion');
-    const openingMsg: Message = { sender: '系统', content: '天亮了，昨晚是平安夜。请大家按顺序开始讨论。', timestamp: Date.now() };
-    setMessages(prev => [...prev, openingMsg]);
+    setPlayers([...engine.players]);
+
+    let nightMsg = '☀️ 天亮了，所有玩家请睁眼。\n';
+    if (victim) {
+      nightMsg += `💀昨晚发生了一起惨案：【${victim.name}】在夜里不幸遇害，已直接出局！`;
+    } else {
+      nightMsg += `✨昨晚是平安夜，无人遇害。`;
+    }
+
+    setMessages(prev => [
+      ...prev,
+      { sender: '系统', content: nightMsg, timestamp: Date.now() },
+      { sender: '系统', content: '请大家开始轮流发言，寻找隐藏在身边的杀手。', timestamp: Date.now() }
+    ]);
+    setLoading(false);
   };
 
   const processNextSpeaker = async (currentMessages: Message[]) => {
@@ -58,7 +69,7 @@ export default function WolfGame() {
       const data = await res.json();
       const aiMsg: Message = { 
         sender: nextSpeaker.name, 
-        content: data.text || '我觉得大家要多注意发言。', 
+        content: data.text || '我觉得大家要小心。', 
         timestamp: Date.now() 
       };
 
@@ -189,7 +200,7 @@ export default function WolfGame() {
     setLoading(true);
     try {
       engine.castVote('1', selectedTarget);
-      await engine.executeAIVotes(messages);
+      await engine.executeAIVotes(messages); // 内部执行其他AI投票
       const result = engine.resolveVoting();
 
       setPlayers([...engine.players]);
@@ -211,7 +222,7 @@ export default function WolfGame() {
       {/* 左侧：聊天与互动区 */}
       <div className="flex-1 flex flex-col p-4 border-r border-gray-800">
         <header className="mb-4 flex justify-between items-center border-b border-gray-800 pb-2">
-          <h1 className="text-xl font-bold">单人狼人杀 (提议投票 + 全员表态制)</h1>
+          <h1 className="text-xl font-bold">6人极简杀手局 (1杀手 vs 5平民)</h1>
           <div className="flex gap-2 items-center">
             <span className="px-3 py-1 bg-blue-600 rounded text-sm">阶段: {phase}</span>
           </div>
@@ -284,14 +295,14 @@ export default function WolfGame() {
 
         {phase === 'ended' && (
           <div className="p-3 bg-red-950 border border-red-500 rounded text-center font-bold text-red-300">
-            游戏已结束！刷新页面可重新开始。
+            游戏已结束！刷新页面可重新开始新的一局。
           </div>
         )}
       </div>
 
       {/* 右侧：玩家状态面板 */}
       <div className="w-80 p-4 bg-gray-950 flex flex-col gap-4">
-        <h2 className="font-bold border-b border-gray-800 pb-2">存活状态与投票</h2>
+        <h2 className="font-bold border-b border-gray-800 pb-2">6人存活状态与投票</h2>
         <p className="text-xs text-gray-400">
           {phase === 'voting' ? '👉 点击下方任意存活玩家进行投票锁定：' : '当前存活玩家列表：'}
         </p>
