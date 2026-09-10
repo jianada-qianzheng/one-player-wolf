@@ -27,7 +27,6 @@ export default function WolfGame() {
     setMessages(prev => [...prev, openingMsg]);
   };
 
-  // 处理发言与提议投票流程
   const processNextSpeaker = async (currentMessages: Message[]) => {
     const nextSpeaker = engine.getNextSpeaker();
     if (!nextSpeaker) return;
@@ -35,7 +34,7 @@ export default function WolfGame() {
     if (!nextSpeaker.isAI) {
       setMessages(prev => [
         ...prev, 
-        { sender: '系统', content: `轮到【${nextSpeaker.name}】发言了（可在输入框发言，或输入“投票吧”发起投票提议）。`, timestamp: Date.now() }
+        { sender: '系统', content: `轮到【${nextSpeaker.name}】发言了（可在输入框发言，或输入“投票”发起投票提议）。`, timestamp: Date.now() }
       ]);
       return;
     }
@@ -59,7 +58,7 @@ export default function WolfGame() {
       const data = await res.json();
       const aiMsg: Message = { 
         sender: nextSpeaker.name, 
-        content: data.text || '我觉得这个人嫌疑很大。', 
+        content: data.text || '我觉得大家要多注意发言。', 
         timestamp: Date.now() 
       };
 
@@ -67,7 +66,6 @@ export default function WolfGame() {
       setMessages(updated);
 
       if (data.action === 'PROPOSE_VOTE') {
-        // AI 发起了投票提议，进入提议表态环节
         engine.phase = 'voting_proposal';
         setPhase('voting_proposal');
         engine.resetProposal(nextSpeaker.name);
@@ -75,7 +73,6 @@ export default function WolfGame() {
           ...prev, 
           { sender: '系统', content: `💡 【提议投票】${nextSpeaker.name} 提议结束讨论并进入投票环节！正在征求全场意见...`, timestamp: Date.now() }
         ]);
-        // 自动触发后续存活 AI 的表态
         await handleProposalResponses(updated);
       }
     } catch (err) {
@@ -85,13 +82,12 @@ export default function WolfGame() {
     }
   };
 
-  // 驱动提议表态环节（让剩余存活的 AI 依次表态）
   const handleProposalResponses = async (currentMessages: Message[]) => {
     const aliveAIs = engine.getAlivePlayers().filter(p => p.isAI);
     let workingMessages = [...currentMessages];
 
+    setLoading(true);
     for (const ai of aliveAIs) {
-      // 跳过提议发起者本人
       if (ai.name === engine.proposalState.proposer) continue;
 
       try {
@@ -122,8 +118,8 @@ export default function WolfGame() {
         console.error(err);
       }
     }
+    setLoading(false);
 
-    // 如果有人类存活且未表态，提示人类表态
     const humanAlive = engine.getAlivePlayers().some(p => !p.isAI);
     if (humanAlive) {
       setMessages(prev => [
@@ -133,7 +129,6 @@ export default function WolfGame() {
     }
   };
 
-  // 人类回应提议
   const handleHumanProposalResponse = async (agree: boolean) => {
     engine.addProposalResponse('你 (Player)', agree);
     const respMsg: Message = {
@@ -165,7 +160,6 @@ export default function WolfGame() {
     e.preventDefault();
     if (!input.trim() || loading || phase !== 'discussion') return;
 
-    // 检查用户是否主动提议投票
     const isProposing = input.includes('投票');
     const userMsg: Message = { sender: '你', content: input, timestamp: Date.now() };
     const nextMessages = [...messages, userMsg];
@@ -230,7 +224,7 @@ export default function WolfGame() {
               <p className="text-sm whitespace-pre-wrap">{m.content}</p>
             </div>
           ))}
-          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考表态中...</div>}
+          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考发言中...</div>}
         </div>
 
         {/* 操作控制区 */}
@@ -296,6 +290,7 @@ export default function WolfGame() {
       </div>
 
       {/* 右侧：玩家状态面板 */}
+      /div>
       <div className="w-80 p-4 bg-gray-950 flex flex-col gap-4">
         <h2 className="font-bold border-b border-gray-800 pb-2">存活状态与投票</h2>
         <p className="text-xs text-gray-400">
