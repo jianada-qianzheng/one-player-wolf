@@ -12,9 +12,9 @@ export async function POST(req) {
     // 2. 构造完整的 AI 提示词上下文
     const systemPrompt = buildAISpeechPrompt({ ...character, systemPrompt: rolePrompt }, gameHistory);
 
-    // 3. 调用 Groq 高速模型生成 AI 发言
+    // 3. 使用 Groq 极速、轻量且高性价比的 llama-3.1-8b-instant 模型
     const response = await generateText({
-      model: groq('llama-3.3-70b-versatile'),
+      model: groq('llama-3.1-8b-instant'), 
       system: systemPrompt,
       messages: [{ role: 'user', content: '请开始你的发言。' }],
     });
