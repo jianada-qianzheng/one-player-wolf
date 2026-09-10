@@ -28,8 +28,17 @@ export default function WolfGame() {
   };
 
   const triggerNextAIAction = async (currentMessages: Message[]) => {
-    const nextAI = engine.getNextAISpeaker();
-    if (!nextAI) return;
+    const nextSpeaker = engine.getNextSpeaker();
+    if (!nextSpeaker) return;
+
+    // 如果下一个发言的是人类，暂停等待用户输入
+    if (!nextSpeaker.isAI) {
+      setMessages(prev => [
+        ...prev, 
+        { sender: '系统', content: `轮到【${nextSpeaker.name}】发言了，请在下方输入框发言。`, timestamp: Date.now() }
+      ]);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -37,7 +46,7 @@ export default function WolfGame() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          character: { name: nextAI.name, role: nextAI.role },
+          character: { name: nextSpeaker.name, role: nextSpeaker.role },
           alivePlayers: engine.getAlivePlayers(),
           phase: engine.phase,
           messages: currentMessages.map(m => ({
@@ -49,7 +58,7 @@ export default function WolfGame() {
 
       const data = await res.json();
       const aiMsg: Message = { 
-        sender: nextAI.name, 
+        sender: nextSpeaker.name, 
         content: data.text || '我觉得大家说得都有点道理，再看看。', 
         timestamp: Date.now() 
       };
@@ -97,7 +106,7 @@ export default function WolfGame() {
       const result = engine.resolveVoting();
 
       setPlayers([...engine.players]);
-      setPhase(engine.phase as Phase); // 修复 TypeScript 类型断言
+      setPhase(engine.phase as Phase);
       setMessages(prev => [
         ...prev,
         { sender: '系统', content: result.summary, timestamp: Date.now() }
@@ -115,7 +124,7 @@ export default function WolfGame() {
       {/* 左侧：聊天与互动区 */}
       <div className="flex-1 flex flex-col p-4 border-r border-gray-800">
         <header className="mb-4 flex justify-between items-center border-b border-gray-800 pb-2">
-          <h1 className="text-xl font-bold">单人简易狼人杀 (AI 自由讨论 + 监听指令投票)</h1>
+          <h1 className="text-xl font-bold">单人简易狼人杀 (按固定座位顺序发言)</h1>
           <div className="flex gap-2 items-center">
             <span className="px-3 py-1 bg-blue-600 rounded text-sm">当前阶段: {phase}</span>
           </div>
@@ -128,7 +137,7 @@ export default function WolfGame() {
               <p className="text-sm whitespace-pre-wrap">{m.content}</p>
             </div>
           ))}
-          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考或投票中...</div>}
+          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考发言中...</div>}
         </div>
 
         {/* 操作控制区 */}
@@ -144,7 +153,7 @@ export default function WolfGame() {
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="输入你的发言（当大家聊透后，AI 会自动触发投票指令）..."
+              placeholder="轮流按顺序发言..."
               className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none"
             />
             <button type="submit" disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded font-bold disabled:opacity-50">
