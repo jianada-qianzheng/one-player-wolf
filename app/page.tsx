@@ -1,8 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Player, Message, Phase } from '@/types/game';
-import { GameEngine } from '@/lib/gameEngine';
+import { Player, Message, Phase, GameEngine } from '@/lib/gameEngine';
 
 export default function WolfGame() {
   const [engine] = useState(() => new GameEngine([
@@ -28,7 +27,6 @@ export default function WolfGame() {
     setMessages(prev => [...prev, openingMsg]);
   };
 
-  // 让下一个 AI 发言，并监听其是否发出投票指令
   const triggerNextAIAction = async (currentMessages: Message[]) => {
     const nextAI = engine.getNextAISpeaker();
     if (!nextAI) return;
@@ -59,7 +57,6 @@ export default function WolfGame() {
       const updated = [...currentMessages, aiMsg];
       setMessages(updated);
 
-      // 监听后端 AI 裁判发出的进入投票指令
       if (data.action === 'ENTER_VOTING') {
         engine.phase = 'voting';
         setPhase('voting');
@@ -84,11 +81,9 @@ export default function WolfGame() {
     setMessages(nextMessages);
     setInput('');
 
-    // 用户发完后，触发 AI 接话并检测是否触发投票
     await triggerNextAIAction(nextMessages);
   };
 
-  // 提交投票并由 GameEngine 结算
   const submitVote = async () => {
     if (!selectedTarget) {
       alert('请先在右侧面板点击选中你要投票的人！');
@@ -97,17 +92,12 @@ export default function WolfGame() {
 
     setLoading(true);
     try {
-      // 1. 记录你的投票
       engine.castVote('1', selectedTarget);
-
-      // 2. 让所有存活的 AI 根据上下文无上帝视角独立盲投
       await engine.executeAIVotes(messages);
-
-      // 3. 引擎统一结算
       const result = engine.resolveVoting();
 
       setPlayers([...engine.players]);
-      setPhase(engine.phase);
+      setPhase(engine.phase as Phase); // 修复 TypeScript 类型断言
       setMessages(prev => [
         ...prev,
         { sender: '系统', content: result.summary, timestamp: Date.now() }
