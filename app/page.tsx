@@ -17,41 +17,85 @@ export default function WolfGame() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // 模拟夜晚结束，进入白天讨论
+  // 开始白天讨论
   const startDay = async () => {
     setPhase('discussion');
     setLoading(true);
     
-    // 模拟 AI 依次发言
-    const newMessages = [...messages, { sender: '系统', content: '天亮了，昨晚是平安夜。请大家开始讨论。', timestamp: Date.now() }];
-    
-    // 让 AI-小美发言
+    const openingMsg: Message = { sender: '系统', content: '天亮了，昨晚是平安夜。请大家开始讨论。', timestamp: Date.now() };
+    const updatedMessages = [...messages, openingMsg];
+    setMessages(updatedMessages);
+
+    // 让 AI-老张率先登场发言
     try {
-      const res = _callAI('小美', '你是一个狼人，但在白天你要伪装成好人。请简短发言，试图洗脱嫌疑或引导怀疑别人。');
-      // 实际开发中可以通过 API 批量触发 AI 轮流发言
-      setMessages([...newMessages, { sender: 'AI-小美', content: '大家早上好，昨晚平安夜，我觉得大家可以先听听别人的逻辑。', timestamp: Date.now() }]);
+      const res = await fetch('/api/game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          character: { name: 'AI-老张', role: 'werewolf' }, // 让老张当狼人试试
+          alivePlayers: players.filter(p => p.isAlive),
+          messages: updatedMessages.map(m => ({
+            role: m.sender === '你' ? 'user' : 'assistant',
+            content: `${m.sender}: ${m.content}`
+          }))
+        })
+      });
+
+      const data = await res.json();
+      const aiReply: Message = { 
+        sender: 'AI-老张', 
+        content: data.text || '大家早上好，昨晚平安夜，我们仔细盘盘逻辑吧。', 
+        timestamp: Date.now() 
+      };
+      
+      setMessages(prev => [...prev, aiReply]);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
+  // 发送消息并调用真实 AI 接口
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || loading) return;
 
     const userMsg: Message = { sender: '你', content: input, timestamp: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
     setInput('');
     setLoading(true);
 
-    // 模拟下一个 AI 对你的话做出反应
-    setTimeout(() => {
-      setMessages(prev => [
-        ...prev, 
-        { sender: 'AI-老张', content: `听到「${input}」这句，我觉得有点可疑，你为什么这么关注这个点？`, timestamp: Date.now() }
-      ]);
+    try {
+      // 真实调用后端 API，把完整对话历史传给 Groq
+      const res = await fetch('/api/game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          character: { name: 'AI-老张', role: 'werewolf' },
+          alivePlayers: players.filter(p => p.isAlive),
+          messages: nextMessages.map(m => ({
+            role: m.sender === '你' ? 'user' : 'assistant',
+            content: `${m.sender}: ${m.content}`
+          }))
+        })
+      });
+
+      const data = await res.json();
+      
+      const aiMsg: Message = { 
+        sender: 'AI-老张', 
+        content: data.text || '我觉得大家说得都有点道理，再看看。', 
+        timestamp: Date.now() 
+      };
+      
+      setMessages(prev => [...prev, aiMsg]);
+    } catch (err) {
+      console.error(err);
+    } finally {
       setLoading(false);
-    }, 1000);
+    }
   };
 
   return (
@@ -114,9 +158,3 @@ export default function WolfGame() {
     </main>
   );
 }
-
-function _callAI(name: string, prompt: string) {
-  // 占位函数：后续对接后端 API Route 调用大模型
-  return '';
-}
-
