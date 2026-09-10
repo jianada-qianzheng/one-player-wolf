@@ -1,37 +1,38 @@
 import { groq } from '@ai-sdk/groq';
 import { generateText } from 'ai';
-import { getRolePrompt } from '@/lib/prompts';
 
 export async function POST(req) {
   try {
     const { character, messages, alivePlayers, phase, proposalState } = await req.json();
 
-    const rolePrompt = getRolePrompt ? getRolePrompt(character.role, character.name, alivePlayers) : '';
-    
     let systemPrompt = '';
-    
+    const aliveListStr = alivePlayers.map(p => p.name).join('、');
+
     if (phase === 'voting_proposal') {
       systemPrompt = `
-${rolePrompt}
-【当前任务：对 ${proposalState?.proposer || '某玩家'} 提出的“立即进入投票环节”进行表态】
-1. 局势判断：根据上面的讨论，如果大家还在扯皮或没有盘出东西，请选择【反对】；如果已经讨论得差不多了，请选择【同意】。
-2. 格式要求：你的回复必须以 \`[AGREE]\` 或 \`[DISAGREE]\` 开头，后面紧跟一句话理由（字数在 20 到 50 字内，口语化，绝对不要出现 undefined）。
+你正在玩 6 人极简杀手局。你的名字是 ${character.name}，身份是 ${character.role === 'killer' ? '暗中潜伏的杀手' : '普通平民'}。
+当前提议：${proposalState?.proposer || '某玩家'} 提议立刻结束讨论并进入投票环节。
+场上存活：${aliveListStr}
+任务：决定是否同意投票。
+格式要求：必须以 \`[AGREE]\` 或 \`[DISAGREE]\` 开头，后面紧跟一句 20-40 字口语化理由（例如：\`[AGREE] 已经盘得差不多了，快投票吧。\`）。绝对不要输出 undefined。
 `;
     } else {
       systemPrompt = `
-${rolePrompt}
-【狼人杀铁律——绝对禁止复读和敷衍】：
-1. **严禁复读废话**：绝对、严禁输出“我觉得大家说得都有点道理”、“再看看”、“我觉得这个人嫌疑很大”这种没有具体对象的空话！
-2. **正面指名道姓**：如果别人问你“谁嫌疑大”或“为什么”，你必须**指名道姓地说是谁**（例如小美、老张或你），并编造一个像模像样的理由（如：“我觉得老张刚才发言吞吞吐吐，像是在给狼人挡刀”）。
-3. **提议投票机制**：如果你觉得已经聊透了，想结束讨论进入投票，请在回复末尾加上 \`[ACTION: PROPOSE_VOTE]\`。
-4. 字数控制在 40 到 90 字，口语化，像真人联机。
+你正在玩 6 人极简杀手局（1个杀手，5个平民）。你的名字是 ${character.name}。
+场上存活玩家：${aliveListStr}
+
+【核心行为准则——严禁复读和敷衍】：
+1. **绝对禁止复读空话**：严禁说“我觉得大家要多注意发言”、“再看看”这类废话！
+2. **针锋相对**：如果别人怀疑你，你必须反咬回去或极力自证；如果你在盘逻辑，必须点名道姓指控某人（如：“我觉得小美刚才的发言非常像杀手在带节奏”）。
+3. **字数与风格**：30 到 70 字，口语化，像真人联机开黑。
+4. **提议投票**：如果你觉得已经吵够了、想投票，可以在结尾加上 \`[ACTION: PROPOSE_VOTE]\`。
 `;
     }
 
     const responseText = (await generateText({
       model: groq('llama-3.1-8b-instant'),
       system: systemPrompt,
-      messages: messages || [{ role: 'user', content: '请发表你的看法。' }],
+      messages: messages || [{ role: 'user', content: '发表你的看法。' }],
     })).text;
 
     let action = null;
@@ -39,19 +40,12 @@ ${rolePrompt}
     let voteDecision = 'AGREE';
 
     if (phase === 'voting_proposal') {
-      if (responseText.includes('[AGREE]')) {
-        voteDecision = 'AGREE';
-        cleanText = responseText.replace('[AGREE]', '').trim();
-      } else if (responseText.includes('[DISAGREE]')) {
+      if (responseText.includes('反对') || responseText.includes('不急') || responseText.includes('DISAGREE')) {
         voteDecision = 'DISAGREE';
-        cleanText = responseText.replace('[DISAGREE]', '').trim();
+        cleanText = responseText.replace(/\[DISAGREE\]|DISAGREE/g, '').trim();
       } else {
-        // 如果没有包含标签，根据文本关键字智能判断
-        if (responseText.includes('反对') || responseText.includes('不急') || responseText.includes('再看看')) {
-          voteDecision = 'DISAGREE';
-        } else {
-          voteDecision = 'AGREE';
-        }
+        voteDecision = 'AGREE';
+        cleanText = responseText.replace(/\[AGREE\]|AGREE/g, '').trim();
       }
     } else {
       if (responseText.includes('[ACTION: PROPOSE_VOTE]')) {
@@ -60,15 +54,22 @@ ${rolePrompt}
       }
     }
 
-    // 确保清理掉任何意外残留的标签
-    cleanText = cleanText.replace(/\[AGREE\]|\[DISAGREE\]|\[ACTION: PROPOSE_VOTE\]/g, '').trim();
+    // 后端防废读兜底过滤
+    if (!cleanText || cleanText.includes('多注意发言') || cleanText.includes('undefined')) {
+      const fallbackList = [
+        '你这么急着转移话题，我看你才是藏在好人堆里的杀手吧！',
+        '大家别被他带节奏了，我觉得他刚才的发言漏洞百出。',
+        '死的人越多越要冷静，我看小美和小刚现在的反应都很可疑。'
+      ];
+      cleanText = fallbackList[Math.floor(Math.random() * fallbackList.length)];
+    }
 
     return Response.json({ 
-      text: cleanText || '我觉得大家要小心点。', 
+      text: cleanText, 
       action,
       voteDecision
     });
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 }, { text: '系统开小差了。' });
+    return Response.json({ error: error.message }, { status: 500 });
   }
 }
