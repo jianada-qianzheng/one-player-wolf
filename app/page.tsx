@@ -5,7 +5,6 @@ import { Player, Message, Phase } from '@/types/game';
 import { GameEngine } from '@/lib/gameEngine';
 
 export default function WolfGame() {
-  // 初始化游戏引擎实例
   const [engine] = useState(() => new GameEngine([
     { id: '1', name: '你 (Player)', role: 'villager', isAI: false, isAlive: true },
     { id: '2', name: 'AI-小美', role: 'werewolf', isAI: true, isAlive: true },
@@ -22,65 +21,28 @@ export default function WolfGame() {
   const [loading, setLoading] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState<string>('');
 
-  // 开始白天讨论
   const startDay = async () => {
     engine.phase = 'discussion';
     setPhase('discussion');
-    engine.startNewRound();
-    setLoading(true);
-    
     const openingMsg: Message = { sender: '系统', content: '天亮了，昨晚是平安夜。请大家开始讨论。', timestamp: Date.now() };
-    const updatedMessages = [...messages, openingMsg];
-    setMessages(updatedMessages);
-
-    try {
-      const res = await fetch('/api/game', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          character: { name: 'AI-老张', role: 'seer' },
-          alivePlayers: engine.getAlivePlayers(),
-          messages: updatedMessages.map(m => ({
-            role: m.sender === '你' ? 'user' : 'assistant',
-            content: `${m.sender}: ${m.content}`
-          }))
-        })
-      });
-
-      const data = await res.json();
-      const aiReply: Message = { 
-        sender: 'AI-老张', 
-        content: data.text || '大家早上好，昨晚平安夜，我们仔细盘盘逻辑吧。', 
-        timestamp: Date.now() 
-      };
-      
-      setMessages(prev => [...prev, aiReply]);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
+    setMessages(prev => [...prev, openingMsg]);
   };
 
-  // 发送消息并调用 Groq AI
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  // 让下一个 AI 发言，并监听其是否发出投票指令
+  const triggerNextAIAction = async (currentMessages: Message[]) => {
+    const nextAI = engine.getNextAISpeaker();
+    if (!nextAI) return;
 
-    const userMsg: Message = { sender: '你', content: input, timestamp: Date.now() };
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
-    setInput('');
     setLoading(true);
-
     try {
       const res = await fetch('/api/game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          character: { name: 'AI-老张', role: 'werewolf' },
+          character: { name: nextAI.name, role: nextAI.role },
           alivePlayers: engine.getAlivePlayers(),
-          messages: nextMessages.map(m => ({
+          phase: engine.phase,
+          messages: currentMessages.map(m => ({
             role: m.sender === '你' ? 'user' : 'assistant',
             content: `${m.sender}: ${m.content}`
           }))
@@ -89,12 +51,23 @@ export default function WolfGame() {
 
       const data = await res.json();
       const aiMsg: Message = { 
-        sender: 'AI-老张', 
-        content: data.text || '我觉得大家说得都有点道理，咱们准备投票吧。', 
+        sender: nextAI.name, 
+        content: data.text || '我觉得大家说得都有点道理，再看看。', 
         timestamp: Date.now() 
       };
-      
-      setMessages(prev => [...prev, aiMsg]);
+
+      const updated = [...currentMessages, aiMsg];
+      setMessages(updated);
+
+      // 监听后端 AI 裁判发出的进入投票指令
+      if (data.action === 'ENTER_VOTING') {
+        engine.phase = 'voting';
+        setPhase('voting');
+        setMessages(prev => [
+          ...prev, 
+          { sender: '系统', content: '💡 【引擎捕捉指令】AI 裁判判定讨论已充分，正式进入投票环节！请在右侧点击选择你要投出的玩家，然后确认。', timestamp: Date.now() }
+        ]);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -102,43 +75,49 @@ export default function WolfGame() {
     }
   };
 
-  // 进入投票阶段
-  const enterVotingPhase = () => {
-    engine.phase = 'voting';
-    setPhase('voting');
-    setMessages(prev => [...prev, { sender: '系统', content: '进入投票阶段！请在右侧面板选择你想投出的玩家，然后点击确认投票。', timestamp: Date.now() }]);
+  const sendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || loading || phase !== 'discussion') return;
+
+    const userMsg: Message = { sender: '你', content: input, timestamp: Date.now() };
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
+    setInput('');
+
+    // 用户发完后，触发 AI 接话并检测是否触发投票
+    await triggerNextAIAction(nextMessages);
   };
 
-  // 提交投票并由 Game Engine 结算
-  const submitVote = () => {
+  // 提交投票并由 GameEngine 结算
+  const submitVote = async () => {
     if (!selectedTarget) {
       alert('请先在右侧面板点击选中你要投票的人！');
       return;
     }
 
-    // 1. 记录你的投票
-    engine.castVote('1', selectedTarget);
+    setLoading(true);
+    try {
+      // 1. 记录你的投票
+      engine.castVote('1', selectedTarget);
 
-    // 2. 模拟 AI 随机投票
-    const aliveAIs = engine.getAlivePlayers().filter(p => p.isAI);
-    aliveAIs.forEach(ai => {
-      const otherPlayers = engine.getAlivePlayers().filter(p => p.id !== ai.id);
-      const randomTarget = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
-      if (randomTarget) {
-        engine.castVote(ai.id, randomTarget.id);
-      }
-    });
+      // 2. 让所有存活的 AI 根据上下文无上帝视角独立盲投
+      await engine.executeAIVotes(messages);
 
-    // 3. 调用引擎核心方法结算投票与胜负
-    const result = engine.resolveVoting();
+      // 3. 引擎统一结算
+      const result = engine.resolveVoting();
 
-    // 4. 更新前端状态（将 engine.phase 强制转为 Phase 类型）
-    setPlayers([...engine.players]);
-    setPhase(engine.phase as Phase);
-    setMessages(prev => [
-      ...prev, 
-      { sender: '系统', content: result.summary, timestamp: Date.now() }
-    ]);
+      setPlayers([...engine.players]);
+      setPhase(engine.phase);
+      setMessages(prev => [
+        ...prev,
+        { sender: '系统', content: result.summary, timestamp: Date.now() }
+      ]);
+      setSelectedTarget('');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -146,14 +125,9 @@ export default function WolfGame() {
       {/* 左侧：聊天与互动区 */}
       <div className="flex-1 flex flex-col p-4 border-r border-gray-800">
         <header className="mb-4 flex justify-between items-center border-b border-gray-800 pb-2">
-          <h1 className="text-xl font-bold">单人简易狼人杀 (Vercel / Next.js)</h1>
+          <h1 className="text-xl font-bold">单人简易狼人杀 (AI 自由讨论 + 监听指令投票)</h1>
           <div className="flex gap-2 items-center">
             <span className="px-3 py-1 bg-blue-600 rounded text-sm">当前阶段: {phase}</span>
-            {phase === 'discussion' && (
-              <button onClick={enterVotingPhase} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 rounded text-sm font-bold">
-                发起投票
-              </button>
-            )}
           </div>
         </header>
 
@@ -164,13 +138,13 @@ export default function WolfGame() {
               <p className="text-sm whitespace-pre-wrap">{m.content}</p>
             </div>
           ))}
-          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考发言...</div>}
+          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考或投票中...</div>}
         </div>
 
         {/* 操作控制区 */}
         {phase === 'night' && (
           <button onClick={startDay} className="w-full py-2 bg-green-600 hover:bg-green-500 rounded font-bold">
-            天黑请睁眼（进入白天）
+            天黑请睁眼（进入白天讨论）
           </button>
         )}
 
@@ -180,10 +154,10 @@ export default function WolfGame() {
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="输入你的发言/辩解..."
+              placeholder="输入你的发言（当大家聊透后，AI 会自动触发投票指令）..."
               className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none"
             />
-            <button type="submit" className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded font-bold">
+            <button type="submit" disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded font-bold disabled:opacity-50">
               发送
             </button>
           </form>
@@ -191,10 +165,11 @@ export default function WolfGame() {
 
         {phase === 'voting' && (
           <div className="flex flex-col gap-2 bg-gray-800 p-4 rounded-lg border border-purple-500">
-            <p className="text-sm font-bold text-purple-300">请在右侧面板点击选择要投票淘汰的玩家，然后确认投票：</p>
+            <p className="text-sm font-bold text-purple-300">🗳️ 投票环节：请在右侧面板点击选择你要投出的玩家，然后确认：</p>
             <button 
               onClick={submitVote} 
-              className="w-full py-2 bg-purple-600 hover:bg-purple-500 rounded font-bold"
+              disabled={loading}
+              className="w-full py-2 bg-purple-600 hover:bg-purple-500 rounded font-bold disabled:opacity-50"
             >
               确认投票淘汰【{players.find(p => p.id === selectedTarget)?.name || '未选择'}】
             </button>
