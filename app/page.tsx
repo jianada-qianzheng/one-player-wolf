@@ -23,19 +23,19 @@ export default function WolfGame() {
   const startDay = async () => {
     engine.phase = 'discussion';
     setPhase('discussion');
-    const openingMsg: Message = { sender: '系统', content: '天亮了，昨晚是平安夜。请大家开始讨论。', timestamp: Date.now() };
+    const openingMsg: Message = { sender: '系统', content: '天亮了，昨晚是平安夜。请大家按顺序开始讨论。', timestamp: Date.now() };
     setMessages(prev => [...prev, openingMsg]);
   };
 
-  const triggerNextAIAction = async (currentMessages: Message[]) => {
+  // 处理发言与提议投票流程
+  const processNextSpeaker = async (currentMessages: Message[]) => {
     const nextSpeaker = engine.getNextSpeaker();
     if (!nextSpeaker) return;
 
-    // 如果下一个发言的是人类，暂停等待用户输入
     if (!nextSpeaker.isAI) {
       setMessages(prev => [
         ...prev, 
-        { sender: '系统', content: `轮到【${nextSpeaker.name}】发言了，请在下方输入框发言。`, timestamp: Date.now() }
+        { sender: '系统', content: `轮到【${nextSpeaker.name}】发言了（可在输入框发言，或输入“投票吧”发起投票提议）。`, timestamp: Date.now() }
       ]);
       return;
     }
@@ -59,20 +59,24 @@ export default function WolfGame() {
       const data = await res.json();
       const aiMsg: Message = { 
         sender: nextSpeaker.name, 
-        content: data.text || '我觉得大家说得都有点道理，再看看。', 
+        content: data.text || '我觉得这个人嫌疑很大。', 
         timestamp: Date.now() 
       };
 
       const updated = [...currentMessages, aiMsg];
       setMessages(updated);
 
-      if (data.action === 'ENTER_VOTING') {
-        engine.phase = 'voting';
-        setPhase('voting');
+      if (data.action === 'PROPOSE_VOTE') {
+        // AI 发起了投票提议，进入提议表态环节
+        engine.phase = 'voting_proposal';
+        setPhase('voting_proposal');
+        engine.resetProposal(nextSpeaker.name);
         setMessages(prev => [
           ...prev, 
-          { sender: '系统', content: '💡 【引擎捕捉指令】AI 裁判判定讨论已充分，正式进入投票环节！请在右侧点击选择你要投出的玩家，然后确认。', timestamp: Date.now() }
+          { sender: '系统', content: `💡 【提议投票】${nextSpeaker.name} 提议结束讨论并进入投票环节！正在征求全场意见...`, timestamp: Date.now() }
         ]);
+        // 自动触发后续存活 AI 的表态
+        await handleProposalResponses(updated);
       }
     } catch (err) {
       console.error(err);
@@ -81,16 +85,105 @@ export default function WolfGame() {
     }
   };
 
+  // 驱动提议表态环节（让剩余存活的 AI 依次表态）
+  const handleProposalResponses = async (currentMessages: Message[]) => {
+    const aliveAIs = engine.getAlivePlayers().filter(p => p.isAI);
+    let workingMessages = [...currentMessages];
+
+    for (const ai of aliveAIs) {
+      // 跳过提议发起者本人
+      if (ai.name === engine.proposalState.proposer) continue;
+
+      try {
+        const res = await fetch('/api/game', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            character: { name: ai.name, role: ai.role },
+            alivePlayers: engine.getAlivePlayers(),
+            phase: 'voting_proposal',
+            proposalState: engine.proposalState,
+            messages: workingMessages.map(m => ({ role: 'user', content: `${m.sender}: ${m.content}` }))
+          })
+        });
+
+        const data = await res.json();
+        const isAgree = data.voteDecision === 'AGREE';
+        engine.addProposalResponse(ai.name, isAgree);
+
+        const aiMsg: Message = {
+          sender: ai.name,
+          content: `${isAgree ? '👍【同意投票】' : '👎【反对投票】'} ${data.text}`,
+          timestamp: Date.now()
+        };
+        workingMessages.push(aiMsg);
+        setMessages([...workingMessages]);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // 如果有人类存活且未表态，提示人类表态
+    const humanAlive = engine.getAlivePlayers().some(p => !p.isAI);
+    if (humanAlive) {
+      setMessages(prev => [
+        ...prev,
+        { sender: '系统', content: `👉 投票提议已发起！请你在下方点击【同意进入投票】或【反对并继续讨论】。`, timestamp: Date.now() }
+      ]);
+    }
+  };
+
+  // 人类回应提议
+  const handleHumanProposalResponse = async (agree: boolean) => {
+    engine.addProposalResponse('你 (Player)', agree);
+    const respMsg: Message = {
+      sender: '你',
+      content: agree ? '👍 我同意进入投票。' : '👎 我反对，继续讨论。',
+      timestamp: Date.now()
+    };
+    const updated = [...messages, respMsg];
+    setMessages(updated);
+
+    if (agree && engine.isProposalPassed()) {
+      engine.phase = 'voting';
+      setPhase('voting');
+      setMessages(prev => [
+        ...prev,
+        { sender: '系统', content: '🎉 全员一致同意！正式进入【投票处决】环节，请在右侧选择你要淘汰的目标。', timestamp: Date.now() }
+      ]);
+    } else if (!agree || engine.isProposalFailed()) {
+      engine.phase = 'discussion';
+      setPhase('discussion');
+      setMessages(prev => [
+        ...prev,
+        { sender: '系统', content: '❌ 提议未通过（有人反对），游戏继续回到日常讨论。', timestamp: Date.now() }
+      ]);
+    }
+  };
+
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || loading || phase !== 'discussion') return;
 
+    // 检查用户是否主动提议投票
+    const isProposing = input.includes('投票');
     const userMsg: Message = { sender: '你', content: input, timestamp: Date.now() };
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
     setInput('');
 
-    await triggerNextAIAction(nextMessages);
+    if (isProposing) {
+      engine.phase = 'voting_proposal';
+      setPhase('voting_proposal');
+      engine.resetProposal('你 (Player)');
+      setMessages(prev => [
+        ...prev,
+        { sender: '系统', content: '💡 【提议投票】你提议结束讨论并进入投票环节！正在征求全场 AI 意见...', timestamp: Date.now() }
+      ]);
+      await handleProposalResponses(nextMessages);
+    } else {
+      await processNextSpeaker(nextMessages);
+    }
   };
 
   const submitVote = async () => {
@@ -124,9 +217,9 @@ export default function WolfGame() {
       {/* 左侧：聊天与互动区 */}
       <div className="flex-1 flex flex-col p-4 border-r border-gray-800">
         <header className="mb-4 flex justify-between items-center border-b border-gray-800 pb-2">
-          <h1 className="text-xl font-bold">单人简易狼人杀 (按固定座位顺序发言)</h1>
+          <h1 className="text-xl font-bold">单人狼人杀 (提议投票 + 全员表态制)</h1>
           <div className="flex gap-2 items-center">
-            <span className="px-3 py-1 bg-blue-600 rounded text-sm">当前阶段: {phase}</span>
+            <span className="px-3 py-1 bg-blue-600 rounded text-sm">阶段: {phase}</span>
           </div>
         </header>
 
@@ -137,7 +230,7 @@ export default function WolfGame() {
               <p className="text-sm whitespace-pre-wrap">{m.content}</p>
             </div>
           ))}
-          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考发言中...</div>}
+          {loading && <div className="text-gray-500 text-sm italic">AI 正在思考表态中...</div>}
         </div>
 
         {/* 操作控制区 */}
@@ -153,13 +246,33 @@ export default function WolfGame() {
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="轮流按顺序发言..."
+              placeholder="发言讨论（输入包含“投票”二字可发起投票提议）..."
               className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white focus:outline-none"
             />
             <button type="submit" disabled={loading} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded font-bold disabled:opacity-50">
               发送
             </button>
           </form>
+        )}
+
+        {phase === 'voting_proposal' && !loading && (
+          <div className="flex gap-4 p-4 bg-gray-800 rounded-lg border border-yellow-500 items-center justify-between">
+            <span className="text-sm text-yellow-300 font-bold">请对当前的投票提议做出抉择：</span>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => handleHumanProposalResponse(true)} 
+                className="px-4 py-2 bg-green-600 hover:bg-green-500 rounded font-bold"
+              >
+                👍 同意投票
+              </button>
+              <button 
+                onClick={() => handleHumanProposalResponse(false)} 
+                className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded font-bold"
+              >
+                👎 反对并继续讨论
+              </button>
+            </div>
+          </div>
         )}
 
         {phase === 'voting' && (
