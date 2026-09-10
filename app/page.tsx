@@ -290,7 +290,6 @@ export default function WolfGame() {
       </div>
 
       {/* 右侧：玩家状态面板 */}
-      /div>
       <div className="w-80 p-4 bg-gray-950 flex flex-col gap-4">
         <h2 className="font-bold border-b border-gray-800 pb-2">存活状态与投票</h2>
         <p className="text-xs text-gray-400">
