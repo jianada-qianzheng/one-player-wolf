@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Player, Message, Phase } from '@/types/game';
 import { GameEngine } from '@/lib/gameEngine';
 
 export default function WolfGame() {
-  // 初始化游戏引擎实例 (保留在组件状态或ref中)
+  // 初始化游戏引擎实例
   const [engine] = useState(() => new GameEngine([
     { id: '1', name: '你 (Player)', role: 'villager', isAI: false, isAlive: true },
     { id: '2', name: 'AI-小美', role: 'werewolf', isAI: true, isAlive: true },
@@ -119,10 +119,9 @@ export default function WolfGame() {
     // 1. 记录你的投票
     engine.castVote('1', selectedTarget);
 
-    // 2. 模拟 AI 随机投票（例如小美、小刚也进行投票）
+    // 2. 模拟 AI 随机投票
     const aliveAIs = engine.getAlivePlayers().filter(p => p.isAI);
     aliveAIs.forEach(ai => {
-      // 简单模拟：AI 随机投给场上除自己外的一个活着的玩家
       const otherPlayers = engine.getAlivePlayers().filter(p => p.id !== ai.id);
       const randomTarget = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
       if (randomTarget) {
@@ -133,9 +132,9 @@ export default function WolfGame() {
     // 3. 调用引擎核心方法结算投票与胜负
     const result = engine.resolveVoting();
 
-    // 4. 更新前端状态
+    // 4. 更新前端状态（将 engine.phase 强制转为 Phase 类型）
     setPlayers([...engine.players]);
-    setPhase(engine.phase);
+    setPhase(engine.phase as Phase);
     setMessages(prev => [
       ...prev, 
       { sender: '系统', content: result.summary, timestamp: Date.now() }
