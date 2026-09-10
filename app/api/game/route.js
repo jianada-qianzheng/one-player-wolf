@@ -4,20 +4,31 @@ import { getRolePrompt } from '@/lib/prompts';
 
 export async function POST(req) {
   try {
-    const { character, messages, alivePlayers, phase } = await req.json();
+    const { character, messages, alivePlayers, phase, proposalState } = await req.json();
 
     const rolePrompt = getRolePrompt(character.role, character.name, alivePlayers);
     
-    const systemPrompt = `
+    let systemPrompt = '';
+    
+    if (phase === 'voting_proposal') {
+      // 处于投票提议表态阶段
+      systemPrompt = `
 ${rolePrompt}
-
-【绝命铁律——绝对禁止 AI 敷衍】：
-1. **严禁复读废话**：绝对、严禁使用“我觉得大家说得都有点道理”、“再看看”、“局势还不明朗”这种万能混子句式！一旦检测到此类废话将被直接判负。
-2. **必须有攻击性或立场**：你必须根据前面的聊天记录，**点名批评某个人**、指出某个人的逻辑漏洞、或者强行带节奏说谁像狼。
-3. **无上帝视角**：你只知道自己是谁，不知道别人身份。
-4. **自主推进投票**：如果你觉得大家已经吵得差不多了，或者有人提议投票，请在回复结尾加上 \`[ACTION: ENTER_VOTING]\`。如果觉得还要继续盘逻辑，则不加。
-5. 字数控制在 40 到 90 字，口语化，像真人联机。
+【当前任务：对 ${proposalState.proposer} 提出的“立即进入投票环节”进行表态】
+1. **严格无上帝视角**：根据当前的讨论局势，判断现在是应该立刻投票，还是应该继续盘逻辑。
+2. **必须明确表态**：你必须选择【同意】或者【反对】进入投票。
+3. **格式要求**：你的回复必须以 \`[AGREE]\` 或 \`[DISAGREE]\` 开头，后面紧跟一句话理由（字数在 30 到 60 字内，口语化）。例如：\`[AGREE] 大家都聊得差不多了，快投票吧。\`
 `;
+    } else {
+      // 正常讨论阶段
+      systemPrompt = `
+${rolePrompt}
+【核心铁律】：
+1. **绝对禁止复读废话**：严禁使用“我觉得大家说得都有点道理”、“再看看”！必须尖锐指出某人的嫌疑或进行防御。
+2. **提议投票机制**：如果你认为局势已经明朗、不需要再废话了，你可以在发言末尾加上 \`[ACTION: PROPOSE_VOTE]\` 来号召大家开始投票。如果觉得还要继续聊，则不加。
+3. 字数控制在 40 到 90 字，口语化。
+`;
+    }
 
     const responseText = (await generateText({
       model: groq('llama-3.1-8b-instant'),
@@ -25,12 +36,32 @@ ${rolePrompt}
       messages: messages || [{ role: 'user', content: '请发表你的看法。' }],
     })).text;
 
-    const shouldVote = responseText.includes('[ACTION: ENTER_VOTING]');
-    const cleanText = responseText.replace('[ACTION: ENTER_VOTING]', '').trim();
+    let action = null;
+    let cleanText = responseText;
+    let voteDecision = null;
+
+    if (phase === 'voting_proposal') {
+      if (responseText.includes('[AGREE]')) {
+        voteDecision = 'AGREE';
+        cleanText = responseText.replace('[AGREE]', '').trim();
+      } else if (responseText.includes('[DISAGREE]')) {
+        voteDecision = 'DISAGREE';
+        cleanText = responseText.replace('[DISAGREE]', '').trim();
+      } else {
+        // 默认兜底为同意
+        voteDecision = 'AGREE';
+      }
+    } else {
+      if (responseText.includes('[ACTION: PROPOSE_VOTE]')) {
+        action = 'PROPOSE_VOTE';
+        cleanText = responseText.replace('[ACTION: PROPOSE_VOTE]', '').trim();
+      }
+    }
 
     return Response.json({ 
       text: cleanText, 
-      action: shouldVote ? 'ENTER_VOTING' : null 
+      action,
+      voteDecision
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
